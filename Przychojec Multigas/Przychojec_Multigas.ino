@@ -23,6 +23,7 @@ U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
 // End of constructor list
 
 int		OLED_ON = 1;		//Deklaracja zmiennej załączenia wyświetlacza OLED gdy sygnał z aplikacji Blynk
+int 		AlarmActive = 0;	//Deklaracja zmiennej odpowiedzialnej za uzbrojenie alarmu
 int		Alarm_Gazowy = 0;	//Deklaracja zmiennej załączenia wyświetlacza OLED gdy przekroczone wartości stężenia gazów
 const int	BathFan = D5;		//Deklaracja pinu na który zostanie wysłany sygnał załączenia wentylatora
 const int	Buzzer = D6;		//Deklaracja pinu na który zostanie wysłany sygnał alarmu buzzer
@@ -32,6 +33,12 @@ float		SetHumid = 75;		//Wilgotności przy której załączy się wentylator
 float		temp(NAN), hum(NAN), pres(NAN), dewPoint(NAN), absHum(NAN), heatIndex(NAN);
 float		Metan;
 float		Tlenek_Wegla;
+float		Ammonia;
+float		Nitrogen_dioxide;
+float		Propane;
+float		IsoButane;
+float		Hydrogen;
+float		Ethanol;
 int		Alarm30(NAN), Alarm50(NAN), Alarm100(NAN), Alarm300(NAN); //Alarmy dla poszczególnych stężeń CO mierzone w ppm
 const int	RESET_MULTIGAS = D7;
 
@@ -76,32 +83,67 @@ SimpleTimer timer;
 SimpleTimer Main_Timer;
 SimpleTimer Alarm_Counter;
 
-void blynkCheck() {					//Sprawdza czy połączone z serwerem Blynk
-	if (WiFi.status() == 3) {
-		if (!Blynk.connected()) {
+
+void blynkCheck()			//Sprawdza czy połączone z serwerem Blynk
+{
+	if (WiFi.status() == WL_CONNECTED)		//WL_CONNECTED: assigned when connected to a WiFi network
+	{
+		if (!Blynk.connected())
+		{
 			Serial.println("WiFi OK, trying to connect to the Blynk server...");
 			Blynk.connect();
 		}
 	}
 
-	if (WiFi.status() == 1) {
+	if (WiFi.status() == WL_NO_SSID_AVAIL)		//WL_NO_SSID_AVAIL: assigned when no SSID are available
+	{
 		Serial.println("No WiFi connection, offline mode.");
+	}
+
+	if (WiFi.status() == WL_IDLE_STATUS)		//WL_IDLE_STATUS is a temporary status assigned when WiFi.begin() is called and remains active until the number of attempts expires (resulting in WL_CONNECT_FAILED) or a connection is established (resulting in WL_CONNECTED)
+	{
+		Serial.println("WL_IDLE_STATUS: WiFi.begin() is called");
+	}
+
+	if (WiFi.status() == WL_SCAN_COMPLETED)		//WL_SCAN_COMPLETED: assigned when the scan networks is completed
+	{
+		Serial.println("WL_SCAN_COMPLETED: networks is completed");
+	}
+
+	if (WiFi.status() == WL_CONNECT_FAILED)		//WL_CONNECT_FAILED: assigned when the connection fails for all the attempts
+	{
+		Serial.println("WL_CONNECT_FAILED: connection fails for all the attempts");
+	}
+
+	if (WiFi.status() == WL_CONNECTION_LOST)	//WL_CONNECTION_LOST: assigned when the connection is lost
+	{
+		Serial.println("WL_CONNECTION_LOST: the connection is lost");
+	}
+
+	if (WiFi.status() == WL_DISCONNECTED)		//WL_DISCONNECTED: assigned when disconnected from a network
+	{
+		Serial.println("WL_DISCONNECTED: disconnected from a network");
 	}
 }
 
-BLYNK_CONNECTED() {					//Informacja że połączono z serwerem Blynk, synchronizacja danych
+BLYNK_CONNECTED()			//Informacja że połączono z serwerem Blynk, synchronizacja danych
+{
 	Serial.println("Reconnected, syncing with cloud.");
 	Blynk.syncAll();
 }
 
-void OTA_Handle() {					//Deklaracja OTA_Handle:
-	if (OTAConfigured == 1) {
-		if (WiFi.waitForConnectResult() == WL_CONNECTED) {
+void OTA_Handle()			//Deklaracja OTA_Handle:
+{
+	if (OTAConfigured == 1)
+	{
+		if (WiFi.waitForConnectResult() == WL_CONNECTED)
+		{
 			ArduinoOTA.handle();
 		}
 	}
 	else {
-		if (WiFi.waitForConnectResult() == WL_CONNECTED) {
+		if (WiFi.waitForConnectResult() == WL_CONNECTED)
+		{
 			// Port defaults to 8266
 			// ArduinoOTA.setPort(8266);
 
@@ -115,7 +157,8 @@ void OTA_Handle() {					//Deklaracja OTA_Handle:
 			// MD5(admin) = 21232f297a57a5a743894a0e4a801fc3
 			// ArduinoOTA.setPasswordHash("21232f297a57a5a743894a0e4a801fc3");
 
-			ArduinoOTA.onStart([]() {
+			ArduinoOTA.onStart([]()
+			{
 				String type;
 				if (ArduinoOTA.getCommand() == U_FLASH) { type = "sketch";}
 				else { type = "filesystem";}  // U_SPIFFS
@@ -123,15 +166,18 @@ void OTA_Handle() {					//Deklaracja OTA_Handle:
 				Serial.println("Start updating " + type);
 			});
 			
-			ArduinoOTA.onEnd([]() {
+			ArduinoOTA.onEnd([]()
+			{
 				Serial.println("\nEnd");
 			});
 			
-			ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+			ArduinoOTA.onProgress([](unsigned int progress, unsigned int total)
+			{
 			Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
 			});
 			
-			ArduinoOTA.onError([](ota_error_t error) {
+			ArduinoOTA.onError([](ota_error_t error)
+			{
 				Serial.printf("Error[%u]: ", error);
 				if (error == OTA_AUTH_ERROR) { Serial.println("Auth Failed");}
 				else if (error == OTA_BEGIN_ERROR) { Serial.println("Begin Failed");}
@@ -151,8 +197,9 @@ void OTA_Handle() {					//Deklaracja OTA_Handle:
 	}
 }
 
-void MainFunction() {					//Robi wszystko co powinien
-
+void MainFunction()			//Robi wszystko co powinien
+{
+	Serial.println("Main function run");
 	Read_BME280_Values();				//Odczyt danych z czujnika BME280
 	MultiGas_Values();				//Odczyt danych z czujnika Mutichannel_Gas_Sensor
 	Gas_Alarms_Count();				//Sprawdza stężenie i zlicza czas jego przekroczenie, na tej podstawie włączany jest alarm
@@ -160,18 +207,22 @@ void MainFunction() {					//Robi wszystko co powinien
 	Wyslij_Dane();					//Wysyła dane do serwera Blynk
 }
 
-void Bathrum_Humidity_Control() {			//Załączanie wentylatora w łazience jeśli warunek spełniony
-	if (hum >= SetHumid + HumidHist) {
+void Bathrum_Humidity_Control()		//Załączanie wentylatora w łazience jeśli warunek spełniony
+{
+	if (hum >= SetHumid + HumidHist)
+	{
 		digitalWrite(BathFan, HIGH);		// turn on relay with voltage HIGH
 	}
-	else if (hum <= SetHumid - HumidHist) {
+	else if (hum <= SetHumid - HumidHist)
+	{
 		digitalWrite(BathFan, LOW);		// turn off relay with voltage LOW
 	}
 }
 
-void Read_BME280_Values() {				//Odczyt z czujnika BME280, temperatura, wilgotność i ciśnienie
+void Read_BME280_Values()		//Odczyt z czujnika BME280, temperatura, wilgotność i ciśnienie
+{
 	bme.readSensor();				//Odczyt wskazań z czujnika BME280
-	pres = bme.getPressure_MB();
+	pres = bme.getPressure_MB() + 24.634;		//Korekta dostosowująca do ciśnienia na poziomie morza
 	hum = bme.getHumidity();
 	temp = bme.getTemperature_C();
 	EnvironmentCalculations::AltitudeUnit envAltUnit  =  EnvironmentCalculations::AltitudeUnit_Meters;
@@ -182,12 +233,11 @@ void Read_BME280_Values() {				//Odczyt z czujnika BME280, temperatura, wilgotno
 	heatIndex = EnvironmentCalculations::HeatIndex(temp, hum, envTempUnit);
 }
 
-void MultiGas_Values() {				//Odczyt z czujnika Grove-Multichannel_Gas_Sensor, stężenie CO i CH4
+void MultiGas_Values()			//Odczyt z czujnika Grove-Multichannel_Gas_Sensor, stężenie CO i CH4
+{
 	//http://wiki.seeedstudio.com/Grove-Multichannel_Gas_Sensor/
-
-	Metan = gas.measure_CH4();			// Methane CH4 >1000ppm
-	Tlenek_Wegla = gas.measure_CO();		// Carbon monoxide CO 1 – 1000ppm
-
+	Metan		= gas.measure_CH4();			// Methane CH4 >1000ppm
+	Tlenek_Wegla	= gas.measure_CO();		// Carbon monoxide CO 1 – 1000ppm
 	/*
 	NH3 = gas.measure_NH3();			// Ammonia NH3 1 – 500ppm
 	CO = gas.measure_CO();				// Carbon monoxide CO 1 – 1000ppm
@@ -199,7 +249,30 @@ void MultiGas_Values() {				//Odczyt z czujnika Grove-Multichannel_Gas_Sensor, s
 	C2H5OH = gas.measure_C2H5OH();			// Ethanol C2H5OH 10 – 500ppm */
 }
 
-void Multi_Gas_Reset() {				//Reset czujnika gazu
+void MultiGas_ValuesALL()			//Odczyt z czujnika Grove-Multichannel_Gas_Sensor, stężenie CO i CH4
+{
+	//http://wiki.seeedstudio.com/Grove-Multichannel_Gas_Sensor/
+	Metan		= gas.measure_CH4();			// Methane CH4 >1000ppm
+	Tlenek_Wegla	= gas.measure_CO();		// Carbon monoxide CO 1 – 1000ppm
+	Ammonia		= gas.measure_NH3();
+	Nitrogen_dioxide =gas.measure_NO2();
+	Propane		= gas.measure_C3H8();
+	IsoButane	= gas.measure_C4H10();
+	Hydrogen	= gas.measure_H2();
+	Ethanol		= gas.measure_C2H5OH();
+	/*
+	NH3 = gas.measure_NH3();			// Ammonia NH3 1 – 500ppm
+	CO = gas.measure_CO();				// Carbon monoxide CO 1 – 1000ppm
+	NO2 = gas.measure_NO2();			// Nitrogen dioxide NO2 0.05 – 10ppm
+	C3H8 = gas.measure_C3H8();			// Propane C3H8 >1000ppm
+	C4H10 = gas.measure_C4H10();			// Iso-butane C4H10 >1000ppm
+	CH4 = gas.measure_CH4();			// Methane CH4 >1000ppm
+	H2 = gas.measure_H2();				// Hydrogen H2 1 – 1000ppm
+	C2H5OH = gas.measure_C2H5OH();			// Ethanol C2H5OH 10 – 500ppm */
+}
+
+void Multi_Gas_Reset()			//Reset czujnika gazu
+{
 	gas.powerOff();
 	OLED_Display();
 	delay(1000);
@@ -222,15 +295,18 @@ void Multi_Gas_Reset() {				//Reset czujnika gazu
 	//delay(1500);
 }
 
-void Gas_Senor_Heating() {
+void Gas_Senor_Heating()		//Rozgrzewanie sensora gazu
+{
 	Metan = gas.measure_CH4();		// Methane CH4 >1000ppm
 	Tlenek_Wegla = gas.measure_CO();	// Carbon monoxide CO 1 – 1000ppm
 	OLED_Display();
 	delay(1500);				// wait 1,5s
 
 	int Metan_final = 1000;
-	if (Metan < 0) { //Komunikat 'ERROR -1'
-		do {
+	if (Metan < 0)
+	{ //Komunikat 'ERROR -1'
+		do
+		{
 			Metan = gas.measure_CH4();	// Methane CH4 >1000ppm
 			u8g2.clearBuffer();
 			u8g2.setFontMode(1);
@@ -239,12 +315,15 @@ void Gas_Senor_Heating() {
 			u8g2.sendBuffer();
 			delay(1500);
 			Multi_Gas_Reset();
-		} while (Metan < 0); 
+		}
+		while (Metan < 0); 
 	}
-	else if (Metan > 1000){
-		Rozgrzewanie();
+	else if (Metan > 10000)
+	{
+		RozgrzewanieCO();
 	}
-	else{
+	else
+	{
 		u8g2.clearBuffer();
 		u8g2.setFont(u8g_font_helvB10);
 		u8g2.drawStr( 3, 25, "ROZGRZEWANIE");
@@ -253,10 +332,12 @@ void Gas_Senor_Heating() {
 		delay(1500);
 	}
 	Metan = gas.measure_CH4();			// Methane CH4 >1000ppm
-	if (Metan > 1000){
-		Rozgrzewanie();
+	if (Metan > 10000)
+	{
+		RozgrzewanieCO();
 	}
-	else{
+	else
+	{
 		u8g2.clearBuffer();
 		u8g2.setFont(u8g_font_helvB10);
 		u8g2.drawStr( 3, 25, "ROZGRZEWANIE");
@@ -266,7 +347,8 @@ void Gas_Senor_Heating() {
 	}
 }
 
-void Rozgrzewanie() {					//Rozgrzewanie czujnika gazu
+void RozgrzewanieMetan()			//Rozgrzewanie czujnika gazu
+{
 	int Metan_initial = gas.measure_CH4();
 	u8g2.clearBuffer();
 	u8g2.setFontMode(1);
@@ -276,43 +358,74 @@ void Rozgrzewanie() {					//Rozgrzewanie czujnika gazu
 	int progress = 3;
 	u8g2.drawBox(3,13,progress,14); // początek progessbar
 
-	do {
+	do
+	{
 		delay(3000);			// wait 3s
 		Metan = gas.measure_CH4();	// Methane CH4 >1000ppm
 		//progress = (Metan_initial - Metan) * 119 / (Metan_initial - 1000);
-		progress = map(Metan, Metan_initial, 1000, 3, 119); //wyliczanie progresu dla paska postępu od 3 do 119
-		if (Metan < Metan_initial){
+		progress = map(Metan, Metan_initial, 10000, 3, 119); //wyliczanie progresu dla paska postępu od 3 do 119
+		if (Metan <= Metan_initial)
+		{
 			Serial.print("map( ");
 			Serial.print(Metan);
 			Serial.print(", ");
 			Serial.print(Metan_initial);
-			Serial.print(", 1000, 3, 119) = ");
+			Serial.print(", 10000, 3, 119) = ");
 			Serial.println(String(progress));
 
 			u8g2.setFontMode(0);
 			u8g2.setDrawColor(0);
 			u8g2.drawBox(3,13,124,14); // kasowanie progresu, czasem jest regres
 			u8g2.setDrawColor(1);
-			u8g2.drawBox(3,13,int(map(Metan, Metan_initial, 1000, 3, 119)),14); // początek progessbar
+			u8g2.drawBox(3,13,int(map(Metan, Metan_initial, 10000, 3, 119)),14); // początek progessbar
 			u8g2.setDrawColor(0);
 			u8g2.drawBox(50,15,28,10); // początek progessbar
 			u8g2.setDrawColor(1);
 			u8g2.setFont(u8g2_font_helvB08_tr);
 			//postępu w procentów  
 			u8g2.setCursor(55,24);
-			u8g2.print(String(int(map(Metan, Metan_initial, 1000, 0, 100))) + "%");
+			u8g2.print(String(int(map(Metan, Metan_initial, 10000, 0, 100))) + "%");
 			u8g2.sendBuffer();
 		}
-		else {
+		else if (Metan > Metan_initial && Metan > 0)
+		{
+			Metan_initial = Metan;
 			Serial.print("map( ");
 			Serial.print(Metan);
 			Serial.print(", ");
 			Serial.print(Metan_initial);
-			Serial.print(", 1000, 3, 119) = ");
+			Serial.print(", 10000, 3, 119) = ");
+			Serial.println(String(progress));
+
+			u8g2.setFontMode(0);
+			u8g2.setDrawColor(0);
+			u8g2.drawBox(3,13,124,14); // kasowanie progresu, czasem jest regres
+			u8g2.setDrawColor(1);
+			u8g2.drawBox(3,13,int(map(Metan, Metan_initial, 10000, 3, 119)),14); // początek progessbar
+			u8g2.setDrawColor(0);
+			u8g2.drawBox(50,15,28,10); // początek progessbar
+			u8g2.setDrawColor(1);
+			u8g2.setFont(u8g2_font_helvB08_tr);
+			//postępu w procentów  
+			u8g2.setCursor(55,24);
+			u8g2.print(String(int(map(Metan, Metan_initial, 10000, 0, 100))) + "%");
+			u8g2.sendBuffer();
+		}
+		else
+		{
+			Serial.print("map( ");
+			Serial.print(Metan);
+			Serial.print(", ");
+			Serial.print(Metan_initial);
+			Serial.print(", 10000, 3, 119) = ");
 			Serial.print(String(progress));
 			Serial.println("   BLAD!");
 		}
-	} while (Metan > 1000);
+		Serial.print("Stezenie CO = ");
+		Serial.print(gas.measure_CO());
+		Serial.print(" ppm");
+	}
+	while (Metan > 10000);
 
 	u8g2.clearBuffer();
 	u8g2.setFont(u8g_font_helvB10);
@@ -322,7 +435,75 @@ void Rozgrzewanie() {					//Rozgrzewanie czujnika gazu
 	delay(1500);
 }
 
-void Wyslij_Dane() {					//Wysyła dane na serwer Blynk
+void RozgrzewanieCO()			//Rozgrzewanie czujnika gazu
+{
+	int CO_initial = gas.measure_CO();
+	u8g2.clearBuffer();
+	u8g2.setFontMode(1);
+	u8g2.setFont(u8g_font_helvB10);
+	u8g2.drawStr( 3, 50, "ROZGRZEWANIE");
+	u8g2.drawFrame(0,10,128,20); //rysuje ramki dla progressbar (x,y,szerokość,wysokość)
+	int progress = 3;
+	u8g2.drawBox(3,13,progress,14); // początek progessbar
+
+	do
+	{
+		delay(3000);			// wait 3s
+		Tlenek_Wegla = gas.measure_CO();	// Methane CH4 >1000ppm
+		if (Tlenek_Wegla > CO_initial && Tlenek_Wegla > 0)
+		{
+			CO_initial = Tlenek_Wegla;
+		}
+		progress = map(Tlenek_Wegla, CO_initial, 30, 3, 119); //wyliczanie progresu dla paska postępu od 3 do 119
+		if (Tlenek_Wegla <= CO_initial)
+		{
+			Serial.print("map( ");
+			Serial.print(Tlenek_Wegla);
+			Serial.print(", ");
+			Serial.print(CO_initial);
+			Serial.print(", 30, 3, 119) = ");
+			Serial.println(String(progress));
+
+			u8g2.setFontMode(0);
+			u8g2.setDrawColor(0);
+			u8g2.drawBox(3,13,124,14); // kasowanie progresu, czasem jest regres
+			u8g2.setDrawColor(1);
+			u8g2.drawBox(3,13,int(map(Tlenek_Wegla, CO_initial, 30, 3, 119)),14); // początek progessbar
+			u8g2.setDrawColor(0);
+			u8g2.drawBox(50,15,28,10); // początek progessbar
+			u8g2.setDrawColor(1);
+			u8g2.setFont(u8g2_font_helvB08_tr);
+			//postępu w procentów  
+			u8g2.setCursor(55,24);
+			u8g2.print(String(int(map(Tlenek_Wegla, CO_initial, 30, 0, 100))) + "%");
+			u8g2.sendBuffer();
+		}
+		else
+		{
+			Serial.print("map( ");
+			Serial.print(Tlenek_Wegla);
+			Serial.print(", ");
+			Serial.print(CO_initial);
+			Serial.print(", 30, 3, 119) = ");
+			Serial.print(String(progress));
+			Serial.println("   BLAD!");
+		}
+		Serial.print("Stezenie CO = ");
+		Serial.print(gas.measure_CO());
+		Serial.print(" ppm");
+	}
+	while (Tlenek_Wegla > 30);
+
+	u8g2.clearBuffer();
+	u8g2.setFont(u8g_font_helvB10);
+	u8g2.drawStr( 3, 25, "ROZGRZEWANIE");
+	u8g2.drawStr( 3, 50, "ZAKONCZONE");
+	u8g2.sendBuffer();
+	delay(1500);
+}
+
+void Wyslij_Dane()			//Wysyła dane na serwer Blynk
+{
 	//BME280
 	Blynk.virtualWrite(V0, temp);			//Temperatura [°C]
 	Blynk.virtualWrite(V1, hum);			//Wilgotność [%]
@@ -338,33 +519,36 @@ void Wyslij_Dane() {					//Wysyła dane na serwer Blynk
 	Blynk.virtualWrite(V25, map(WiFi.RSSI(), -105, -40, 0, 100) ); //Siła sygnału Wi-Fi [%]
 }
 
-BLYNK_WRITE(V40) {	//Obsługa terminala
+BLYNK_WRITE(V40)			//Obsługa terminala
+{
 	String TerminalCommand = param.asStr();
 	TerminalCommand.toLowerCase();
 
-	if (String("ports") == TerminalCommand) {
+	if (String("ports") == TerminalCommand)
+	{
 		terminal.clear();
 		terminal.println("PORT     DESCRIPTION        UNIT");
 		terminal.println("V0   ->  Temperature        °C");
-		terminal.println("V1   ->  Humdity            %");
+		terminal.println("V1   ->  Humidity           %");
 		terminal.println("V2   ->  Pressure           HPa");
 		terminal.println("V3   ->  DewPoint           °C");
-		terminal.println("V4   ->  Abs Humdity        g/m³");
+		terminal.println("V4   ->  Abs Humidity       g/m³");
 		terminal.println("V5   ->  Heat Index         °C");
 		terminal.println("V7   ->  Tlenek_Wegla       ppm");
 		terminal.println("V8   ->  Metan              ppm");
 		terminal.println("V20  <-  OLED_ON            1/0");
 		terminal.println("V21  <-  GasReset           1/0");
+		terminal.println("V22  <-  AlarmActive        1/0");
 		terminal.println("V25  ->  WiFi Signal        %");
-		terminal.println("V40 <->  Terminal           String");
 	}
-	else if (String("values") == TerminalCommand) {
+	else if (String("values") == TerminalCommand)
+	{
 		terminal.clear();
 		terminal.println("PORT   DATA              VALUE");
 		terminal.print("V0     Temperature   =   ");
 		terminal.print(temp);
 		terminal.println(" °C");
-		terminal.print("V1     Humdity       =   ");
+		terminal.print("V1     Humidity      =   ");
 		terminal.print(hum);
 		terminal.println(" %");
 		terminal.print("V3     Pressure      =   ");
@@ -373,7 +557,7 @@ BLYNK_WRITE(V40) {	//Obsługa terminala
 		terminal.print("V4     DewPoint      =   ");
 		terminal.print(dewPoint);
 		terminal.println(" °C");
-		terminal.print("V5     Abs Humdity   =   ");
+		terminal.print("V5     Abs Humidity  =   ");
 		terminal.print(absHum);
 		terminal.println(" g/m3");
 		terminal.print("V6     Heat Index    =   ");
@@ -392,24 +576,83 @@ BLYNK_WRITE(V40) {	//Obsługa terminala
 		terminal.print(map(WiFi.RSSI(), -105, -40, 0, 100));
 		terminal.println(" %");
 	}
-	else if (String("hello") == TerminalCommand) {
+	else if (String("alarms") == TerminalCommand)
+	{
+		terminal.clear();
+		terminal.println("PORT   DATA              VALUE");
+		terminal.print("N/A    Alarm30       =   ");
+		terminal.print(Alarm30);
+		terminal.println(" s");
+		terminal.print("N/A    Alarm50       =   ");
+		terminal.print(Alarm50);
+		terminal.println(" s");
+		terminal.print("N/A    Alarm100      =   ");
+		terminal.print(Alarm100);
+		terminal.println(" s");
+		terminal.print("N/A    Alarm300      =   ");
+		terminal.print(Alarm300);
+		terminal.println(" s");
+	}
+	else if (String("gas") == TerminalCommand)
+	{
+		terminal.clear();
+		terminal.println("Measurement requested.");
+		terminal.println("Gathering results will take about 6s...");
+		MultiGas_ValuesALL();
+		terminal.clear();
+		terminal.println("GAS                     VALUE");
+		terminal.print("Ammonia NH3          = ");
+		terminal.print(Ammonia);
+		terminal.println(" ppm");
+		terminal.print("Carbon monoxide CO   = ");
+		terminal.print(Tlenek_Wegla);
+		terminal.println(" ppm");
+		terminal.print("Nitrogen dioxide NO2 = ");
+		terminal.print(Nitrogen_dioxide);
+		terminal.println(" ppm");
+		terminal.print("Propane C3H8         = ");
+		terminal.print(Propane);
+		terminal.println(" ppm");
+		terminal.print("Iso-butane C4H10     = ");
+		terminal.print(IsoButane);
+		terminal.println(" ppm");
+		terminal.print("Methane CH4          = ");
+		terminal.print(Metan);
+		terminal.println(" ppm");
+		terminal.print("Hydrogen H2          = ");
+		terminal.print(Hydrogen);
+		terminal.println(" ppm");
+		terminal.print("Ethanol C2H5OH       = ");
+		terminal.print(Ethanol);
+		terminal.println(" ppm");
+	}
+	else if (String("hello") == TerminalCommand)
+	{
 		terminal.clear();
 		terminal.println("Hi Łukasz. Have a great day!");
 	}
-	else {
+	else if (String("cls") == TerminalCommand)
+	{
 		terminal.clear();
-		terminal.println("Type 'PORTS' to show list") ;
-		terminal.println("Type 'VALUES' to show list") ;
-		terminal.println("or 'HELLO' to say hello!") ;
+	}
+	else
+	{
+		terminal.clear();
+		terminal.println("Type 'PORTS' to show list");
+		terminal.println("Type 'VALUES' to show sensor data");
+		terminal.println("Type 'ALARMS' to show alarms data");
+		terminal.println("Type 'GAS' to show gas measurements");
+		terminal.println("Type 'CLS' to clear terminal");
+		terminal.println("or 'HELLO' to say hello!");
 	}
 	// Ensure everything is sent
 	terminal.flush();
 }
 
-void OLED_Display() {					//Włącza lub wyłącza wyświetlanie danych na ekranie OLED
-	Serial.print("OLED_ON = ");
-	Serial.println(OLED_ON);
-	if (OLED_ON == 1 || Alarm_Gazowy == 1){
+void OLED_Display()			//Włącza lub wyłącza wyświetlanie danych na ekranie OLED
+{
+	if (OLED_ON == 1 || Alarm_Gazowy == 1)
+	{
 		//Wyświetlanie dane na OLED
 		u8g2.clearBuffer();
 		u8g2.setFontMode(1);
@@ -423,95 +666,123 @@ void OLED_Display() {					//Włącza lub wyłącza wyświetlanie danych na ekran
 		u8g2.print(String(int(Metan)) + " ppm");
 		u8g2.sendBuffer(); 
 	}
-	else if (OLED_ON == 0 && Alarm_Gazowy == 0){
+	else if (OLED_ON == 0 && Alarm_Gazowy == 0)
+	{
 		u8g2.clearBuffer();
 		u8g2.sendBuffer();
 	}
 }
 
-void Gas_Alarms_Count() {				//Funkcja uruchamiana co 1s dolicza sekundę do poszczególnych alarmów jeśli stężenie przekroczone określony próg
+void Gas_Alarms_Count()			//Funkcja uruchamiana co 1s dolicza sekundę do poszczególnych alarmów jeśli stężenie przekroczone określony próg
+{
 	/*Stężenie tlenku węgla (CO) Minimalny czas aktywacji czujnika tlenku węgla  Maksymalny czas aktywacji czujnika tlenku węgla
 	30 ppm  120 minut –
 	50 ppm  60 minut  90 minut
 	100 ppm 10 minut  40 minut
 	300 ppm – 3 minuty  */
 
-	if (Tlenek_Wegla < 30) {				//Zeruje czasy wszystkich alarmów
+	if (Tlenek_Wegla < 30)					//Zeruje czasy wszystkich alarmów
+	{
 		Alarm30 = 0;
 	}
-	else if (Tlenek_Wegla > 30 && Tlenek_Wegla < 50) {	//Dodaje sekundę do czasu pierwszego alarmu
+	else if (Tlenek_Wegla > 30 && Tlenek_Wegla < 50)	//Dodaje sekundę do czasu pierwszego alarmu
+	{
 		Alarm30 = Alarm30 +1;
 		Alarm50 = 0;
 		Alarm100 = 0;
 		Alarm300 = 0;
 	}
-	else if (Tlenek_Wegla > 50 && Tlenek_Wegla < 100) {	//Dodaje sekundę do czasu pierwszego i drugiego alarmu
+	else if (Tlenek_Wegla > 50 && Tlenek_Wegla < 100)	//Dodaje sekundę do czasu pierwszego i drugiego alarmu
+	{
 		Alarm30 = Alarm30 +1;
 		Alarm50 = Alarm50 +1;
 		Alarm100 = 0;
 		Alarm300 = 0;
 	}
-	else if (Tlenek_Wegla > 100 && Tlenek_Wegla < 300) {	//Dodaje sekundę do czasu pierwszego drugiego i trzeciego alarmu
+	else if (Tlenek_Wegla > 100 && Tlenek_Wegla < 300)	//Dodaje sekundę do czasu pierwszego drugiego i trzeciego alarmu
+	{
 		Alarm30 = Alarm30 +1;
 		Alarm50 = Alarm50 +1;
 		Alarm100 = Alarm100 +1;
 		Alarm300 = 0;
 	}
-	else if (Tlenek_Wegla > 300 ) {				//Dodaje sekundę do czasu wszystkich alarmów
+	else if (Tlenek_Wegla > 300 )				//Dodaje sekundę do czasu wszystkich alarmów
+	{
 		Alarm30 = Alarm30 +1;
 		Alarm50 = Alarm50 +1;
 		Alarm100 = Alarm100 +1;
 		Alarm300 = Alarm300 +1;
 	}
-	Alarm_Check();						//Włącza buzer i ekran OLED z odczytami jeśli wartości są przekroczone
+	if (AlarmActive == 1)					//Uzbrajanie alarmu z poziomu BLYNK
+	{
+		Alarm_Check();						//Włącza buzer i ekran OLED z odczytami jeśli wartości są przekroczone
+	}
 }
 
-void Alarm_Check() {					//Funkcja sprawdza czy należy uruchomić alarm czyli włączyć ekran z informacją o stężeniu gazów i uruchomić buzer
+void Alarm_Check()			//Funkcja sprawdza czy należy uruchomić alarm czyli włączyć ekran z informacją o stężeniu gazów i uruchomić buzer
+{
 	/*Stężenie tlenku węgla (CO) Minimalny czas aktywacji czujnika tlenku węgla  Maksymalny czas aktywacji czujnika tlenku węgla
 	30 ppm  120 minut –
 	50 ppm  60 minut  90 minut
 	100 ppm 10 minut  40 minut
 	300 ppm – 3 minuty  */
 	//Alarm dla przekroczenia stężenia CO
-	if (Alarm30 > 20 || Metan == 10000) {		//Stężenie CO utrzymuje się powyżej 30ppm przez ponad 120minut
-		tone(Buzzer, 3000, 250);					//Send 3KHz sound signal...
+	if (Alarm30 > 20)		//Stężenie CO utrzymuje się powyżej 30ppm przez ponad 120minut
+	{
+		tone(Buzzer, 3000, 250);		//Send 3KHz sound signal...
+		Alarm_Gazowy = 1;			//Włącza ekran OLED z odczytami
+		Blynk.notify("ALARM! Stężenie CO przekroczyło normy Alarm30!!!!");
+	}
+	else if (Alarm50 > 3600)	//Stężenie CO utrzymuje się powyżej 50ppm przez ponad 60minut
+	{
+		tone(Buzzer, 3000, 500);		//Send 3KHz sound signal...
+		Alarm_Gazowy = 1;			//Włącza ekran OLED z odczytami
+		Blynk.notify("ALARM! Stężenie CO przekroczyło normy Alarm50!!!!");
+	}
+	else if (Alarm100 > 600)	//Stężenie CO utrzymuje się powyżej 100ppm przez ponad 10minut
+	{
+		tone(Buzzer, 3000, 500);		//Send 3KHz sound signal...
 		Alarm_Gazowy = 1;						//Włącza ekran OLED z odczytami
+		Blynk.notify("ALARM! Stężenie CO przekroczyło normy Alarm100!!!!");
 	}
-	else if (Alarm50 > 3600 || Metan == 10000) {	//Stężenie CO utrzymuje się powyżej 50ppm przez ponad 60minut
-		tone(Buzzer, 3000, 500);					//Send 3KHz sound signal...
-		Alarm_Gazowy = 1;						//Włącza ekran OLED z odczytami   
+	else if (Alarm300 > 600)	//Stężenie CO utrzymuje się powyżej 300ppm przez ponad 3minuty
+	{
+		tone(Buzzer, 3000, 500);		//Send 3KHz sound signal...
+		Alarm_Gazowy = 1;			//Włącza ekran OLED z odczytami
+		Blynk.notify("ALARM! Stężenie CO przekroczyło normy Alarm300!!!!");
 	}
-	else if (Alarm100 > 600 || Metan == 10000) {	//Stężenie CO utrzymuje się powyżej 100ppm przez ponad 10minut
-		tone(Buzzer, 3000, 500);					//Send 3KHz sound signal...
-		Alarm_Gazowy = 1;						//Włącza ekran OLED z odczytami
-	}
-	else if (Alarm300 > 600 || Metan == 10000) {	//Stężenie CO utrzymuje się powyżej 300ppm przez ponad 3minuty
-		tone(Buzzer, 3000, 500);					//Send 3KHz sound signal...
-		Alarm_Gazowy = 1;						//Włącza ekran OLED z odczytami
-	}
-	else { //Wyłączenie alarmu
-		noTone(Buzzer);							//Stop sound...
-		Alarm_Gazowy = 0;						//Wyłącza ekran OLED z odczytami    
+	else //Wyłączenie alarmu
+	{
+		noTone(Buzzer);				//Stop sound...
+		Alarm_Gazowy = 0;			//Wyłącza ekran OLED z odczytami    
 	}
 
 	//Alarm dla przekroczenia stężenia CH4
-	if (Metan == 10000) {				//Stężenie CH4 Metanu Przekroczyło stężenie 1% czyli 10000ppm
-		tone(Buzzer, 3000, 500);					//Send 1KHz sound signal...
-		Alarm_Gazowy = 1;							//Włącza ekran OLED z odczytami
+	/*
+	if (Metan > 12000)				//Stężenie CH4 Metanu Przekroczyło stężenie 1% czyli 10000ppm
+	{
+		tone(Buzzer, 3000, 500);		//Send 1KHz sound signal...
+		Alarm_Gazowy = 1;			//Włącza ekran OLED z odczytami
+		Blynk.notify("ALARM! Stężenie metanu przekroczyło 10000ppm!!!!");
 	}
-	else { //Wyłączenie alarmu
-		noTone(Buzzer);							//Stop sound...
-		Alarm_Gazowy = 0;						//Wyłącza ekran OLED z odczytami
+	else						//Wyłączenie alarmu
+	{
+		noTone(Buzzer);				//Stop sound...
+		Alarm_Gazowy = 0;			//Wyłącza ekran OLED z odczytami
 	}
+	*/
 }
 
-BLYNK_WRITE(V20) {					//Włączanie i wyłączanie wyświetlacza z poziomu aplikacji BLYNK
+BLYNK_WRITE(V20)			//Włączanie i wyłączanie wyświetlacza z poziomu aplikacji BLYNK
+{
 	OLED_ON = param.asInt(); 
 }
 
-BLYNK_WRITE(V21) {					//Reset sensora gazu
+BLYNK_WRITE(V21)			//Reset sensora gazu
+{
 	int GasReset = param.asInt(); 
-	if (GasReset == 1) {
+	if (GasReset == 1)
+	{
 		gas.powerOff();
 		//Wyświetlanie dane na OLED
 		u8g2.clearBuffer();
@@ -528,16 +799,23 @@ BLYNK_WRITE(V21) {					//Reset sensora gazu
 		u8g2.sendBuffer();
 	}
 }
+
+BLYNK_WRITE(V22)			//Uzbrajanie Alarmu
+{
+	AlarmActive = param.asInt(); 
+}
+
 /***********************************************************************************************/
 
-void setup(){
-	Serial.begin(9600);
+void setup()
+{
+	Serial.begin(115200);
 	WiFi.begin(ssid, pass);
 	Serial.println("Connecting to BLYNK");
 	Blynk.config(auth);
 
 	timer.setInterval(checkInterval, blynkCheck);		// Multiple timer https://codebender.cc/example/SimpleTimer/SimpleTimerAlarmExample#SimpleTimerAlarmExample.ino
-	Main_Timer.setInterval(3000, MainFunction);		// 1000 = 1s
+	Main_Timer.setInterval(10000, MainFunction);		// 1000 = 1s
 	Alarm_Counter.setInterval(1000, Gas_Alarms_Count);	//Co 1s uruchamia funkcje i dolicza sekundę do poszczególnych alarmów
 
 	//Ustawianie pinów
@@ -555,7 +833,7 @@ void setup(){
 	u8g2.enableUTF8Print(); 
 	u8g2.clearBuffer();
 	u8g2.setFontMode(1);
-	u8g2.setFont(u8g_font_helvB18);    
+	u8g2.setFont(u8g_font_helvB18);
 	u8g2.setCursor(0,22);
 	u8g2.print(F("CZUJNIK")); 
 	u8g2.setCursor(0,46);
@@ -567,12 +845,14 @@ void setup(){
 
 
 	// Inicjalizacja Grove - Multichannel Gas Sensor
-	gas.begin(0x04);   //the default I2C address of the slave is 0x04
+	gas.begin(0x04);			//the default I2C address of the slave is 0x04
 	gas.powerOn();
+	delay(1000);
 	Gas_Senor_Heating();
 
 	//inicjowanie czujnika BME280
-	if (!bme.begin()) {
+	if (!bme.begin())
+	{
 		Serial.println("Could not find a valid BME280 sensor, check wiring!");
 		while (1);
 	}
@@ -580,10 +860,11 @@ void setup(){
 	bme.setTempCal(-7.1);			// Temp was reading high so subtract 7.1 degree 
 }
 
-void loop(){
+void loop()
+{
 	timer.run();
 	Main_Timer.run();
 	OTA_Handle();			//Obsługa OTA (Over The Air) wgrywanie nowego kodu przez Wi-Fi
-	//Alarm_Counter.run();
+	Alarm_Counter.run();
 	if (Blynk.connected()) Blynk.run();
 }
