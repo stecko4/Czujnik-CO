@@ -14,12 +14,16 @@ SCK (Serial Clock)  ->  D1 on NodeMCU / Wemos D1 PRO */
 //Create BME280 object
 BME280_I2C bme(0x76);			//I2C using address 0x76
 
+//for OTA
+#include <ESP8266mDNS.h>
+#include <WiFiUdp.h>
+#include <ArduinoOTA.h>
+bool OTAConfigured = 0;
+
 //Wyswietlacz OLED
 #include <Arduino.h>
 #include <U8g2lib.h>
 U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
-//U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
-//U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
 // End of constructor list
 
 int		OLED_ON = 1;		//Deklaracja zmiennej załączenia wyświetlacza OLED gdy sygnał z aplikacji Blynk
@@ -40,7 +44,6 @@ float		IsoButane;
 float		Hydrogen;
 float		Ethanol;
 int		Alarm30(NAN), Alarm50(NAN), Alarm100(NAN), Alarm300(NAN); //Alarmy dla poszczególnych stężeń CO mierzone w ppm
-const int	RESET_MULTIGAS = D7;
 
 
 /*Stężenie tlenku węgla (CO)  Minimalny czas aktywacji czujnika tlenku węgla  Maksymalny czas aktywacji czujnika tlenku węgla
@@ -60,29 +63,17 @@ c = gas.measure_H2();		// Hydrogen H2 1 – 1000ppm
 c = gas.measure_C2H5OH();	// Ethanol C2H5OH 10 – 500ppm
 */
 
-
-//for OTA
-#include <ESP8266mDNS.h>
-#include <WiFiUdp.h>
-#include <ArduinoOTA.h>
-bool OTAConfigured = 0;
-
 //#define BLYNK_DEBUG // Optional, this enables lots of prints
-#define BLYNK_PRINT Serial
+//#define BLYNK_PRINT Serial
 #include <ESP8266WiFi.h>
 #include <BlynkSimpleEsp8266.h>
 WidgetTerminal terminal(V40);	//Attach virtual serial terminal to Virtual Pin V40
 #include <SimpleTimer.h>
+SimpleTimer Timer;
 
 const char	ssid[]			= "XXXX";
 const char	pass[]			= "XXXX";
 const char	auth[]			= "XXXX";	//Token Łazienka Przychojec
-const int	checkInterval		= 30000;	//Co 30s zostanie sprawdzony czy jest sieć Wi-Fi i czy połączono z serwerem Blynk
-
-SimpleTimer timer;
-SimpleTimer Main_Timer;
-SimpleTimer Alarm_Counter;
-
 
 void blynkCheck()			//Sprawdza czy połączone z serwerem Blynk
 {
@@ -136,19 +127,19 @@ void OTA_Handle()			//Deklaracja OTA_Handle:
 {
 	if (OTAConfigured == 1)
 	{
-		if (WiFi.waitForConnectResult() == WL_CONNECTED)
-		{
+		if (WiFi.waitForConnectResult() == WL_CONNECTED) {
 			ArduinoOTA.handle();
 		}
 	}
-	else {
+	else
+	{
 		if (WiFi.waitForConnectResult() == WL_CONNECTED)
 		{
 			// Port defaults to 8266
 			// ArduinoOTA.setPort(8266);
 
 			// Hostname defaults to esp8266-[ChipID]
-			ArduinoOTA.setHostname("ESP8266_Przychojec");
+			ArduinoOTA.setHostname("Przychojec_Multigas");
 
 			// No authentication by default
 			// ArduinoOTA.setPassword("admin");
@@ -157,8 +148,7 @@ void OTA_Handle()			//Deklaracja OTA_Handle:
 			// MD5(admin) = 21232f297a57a5a743894a0e4a801fc3
 			// ArduinoOTA.setPasswordHash("21232f297a57a5a743894a0e4a801fc3");
 
-			ArduinoOTA.onStart([]()
-			{
+			ArduinoOTA.onStart([]() {
 				String type;
 				if (ArduinoOTA.getCommand() == U_FLASH) { type = "sketch";}
 				else { type = "filesystem";}  // U_SPIFFS
@@ -166,18 +156,15 @@ void OTA_Handle()			//Deklaracja OTA_Handle:
 				Serial.println("Start updating " + type);
 			});
 			
-			ArduinoOTA.onEnd([]()
-			{
+			ArduinoOTA.onEnd([]() {
 				Serial.println("\nEnd");
 			});
 			
-			ArduinoOTA.onProgress([](unsigned int progress, unsigned int total)
-			{
+			ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
 			Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
 			});
 			
-			ArduinoOTA.onError([](ota_error_t error)
-			{
+			ArduinoOTA.onError([](ota_error_t error) {
 				Serial.printf("Error[%u]: ", error);
 				if (error == OTA_AUTH_ERROR) { Serial.println("Auth Failed");}
 				else if (error == OTA_BEGIN_ERROR) { Serial.println("Begin Failed");}
@@ -199,7 +186,6 @@ void OTA_Handle()			//Deklaracja OTA_Handle:
 
 void MainFunction()			//Robi wszystko co powinien
 {
-	Serial.println("Main function run");
 	Read_BME280_Values();				//Odczyt danych z czujnika BME280
 	MultiGas_Values();				//Odczyt danych z czujnika Mutichannel_Gas_Sensor
 	Gas_Alarms_Count();				//Sprawdza stężenie i zlicza czas jego przekroczenie, na tej podstawie włączany jest alarm
@@ -249,7 +235,7 @@ void MultiGas_Values()			//Odczyt z czujnika Grove-Multichannel_Gas_Sensor, stę
 	C2H5OH = gas.measure_C2H5OH();			// Ethanol C2H5OH 10 – 500ppm */
 }
 
-void MultiGas_ValuesALL()			//Odczyt z czujnika Grove-Multichannel_Gas_Sensor, stężenie CO i CH4
+void MultiGas_ValuesALL()		//Odczyt z czujnika Grove-Multichannel_Gas_Sensor, stężenie CO i CH4
 {
 	//http://wiki.seeedstudio.com/Grove-Multichannel_Gas_Sensor/
 	Metan		= gas.measure_CH4();			// Methane CH4 >1000ppm
@@ -287,12 +273,6 @@ void Multi_Gas_Reset()			//Reset czujnika gazu
 
 	Metan = gas.measure_CH4();          // Methane CH4 >1000ppm
 	Tlenek_Wegla = gas.measure_CO();    // Carbon monoxide CO 1 – 1000ppm
-
-	//then pulse reset, see page 309 of datasheet
-	//digitalWrite (RESET_MULTIGAS, LOW);
-	//delay (100);  // pulse for at least 2 clock cycles
-	//digitalWrite (RESET_MULTIGAS, HIGH);
-	//delay(1500);
 }
 
 void Gas_Senor_Heating()		//Rozgrzewanie sensora gazu
@@ -347,7 +327,7 @@ void Gas_Senor_Heating()		//Rozgrzewanie sensora gazu
 	}
 }
 
-void RozgrzewanieMetan()			//Rozgrzewanie czujnika gazu
+void RozgrzewanieMetan()		//Rozgrzewanie czujnika gazu
 {
 	int Metan_initial = gas.measure_CH4();
 	u8g2.clearBuffer();
@@ -516,7 +496,12 @@ void Wyslij_Dane()			//Wysyła dane na serwer Blynk
 	Blynk.virtualWrite(V8, Metan);			//Stężenie Metanu [ppm]  
 	//Blynk.virtualWrite(V9, BathFan);		//Stan włączenia wentylatora Wł/Wył
 	//Blynk.virtualWrite(V10, Piec_CO);		//Stan włączenia pieca CO Wł/Wył
-	Blynk.virtualWrite(V25, map(WiFi.RSSI(), -105, -40, 0, 100) ); //Siła sygnału Wi-Fi [%]
+	Blynk.virtualWrite(V25, WiFi_Strength(WiFi.RSSI())); //Siła sygnału Wi-Fi [%]
+}
+
+int WiFi_Strength (long Signal)		//Zwraca siłę sygnału WiFi sieci do której jest podłączony w %. REF: https://www.adriangranados.com/blog/dbm-to-percent-conversion
+{
+	return constrain(round((-0.0154*Signal*Signal)-(0.3794*Signal)+98.182), 0, 100);
 }
 
 BLYNK_WRITE(V40)			//Obsługa terminala
@@ -573,7 +558,7 @@ BLYNK_WRITE(V40)			//Obsługa terminala
 		terminal.print(OLED_ON);
 		terminal.println(" ");
 		terminal.print("V25    WiFi Signal   =   ");
-		terminal.print(map(WiFi.RSSI(), -105, -40, 0, 100));
+		terminal.print(WiFi_Strength(WiFi.RSSI()));
 		terminal.println(" %");
 	}
 	else if (String("alarms") == TerminalCommand)
@@ -595,9 +580,6 @@ BLYNK_WRITE(V40)			//Obsługa terminala
 	}
 	else if (String("gas") == TerminalCommand)
 	{
-		terminal.clear();
-		terminal.println("Measurement requested.");
-		terminal.println("Gathering results will take about 6s...");
 		MultiGas_ValuesALL();
 		terminal.clear();
 		terminal.println("GAS                     VALUE");
@@ -814,21 +796,16 @@ void setup()
 	Serial.println("Connecting to BLYNK");
 	Blynk.config(auth);
 
-	timer.setInterval(checkInterval, blynkCheck);		// Multiple timer https://codebender.cc/example/SimpleTimer/SimpleTimerAlarmExample#SimpleTimerAlarmExample.ino
-	Main_Timer.setInterval(10000, MainFunction);		// 1000 = 1s
-	Alarm_Counter.setInterval(1000, Gas_Alarms_Count);	//Co 1s uruchamia funkcje i dolicza sekundę do poszczególnych alarmów
+	Timer.setInterval(30000, blynkCheck);		//Sprawdza czy BLYNK połączony co 30s
+	Timer.setInterval(10000, MainFunction);		//Uruchamia wszystko w pętli co 10s
+	Timer.setInterval(1000, Gas_Alarms_Count);	//Co 1s uruchamia funkcje i dolicza sekundę do poszczególnych alarmów
 
 	//Ustawianie pinów
-	pinMode (RESET_MULTIGAS, OUTPUT);
-	digitalWrite (RESET_MULTIGAS, HIGH);
 	//pinMode(BathFan, OUTPUT);
-	//pinMode(Buzzer, OUTPUT);
+	pinMode(Buzzer, OUTPUT);
 	//pinMode(Piec_CO, INPUT);
 
-
 	//inicjowanie wyświetlacza
-	//pinMode(9, OUTPUT);
-	//digitalWrite(9, 0); // default output in I2C mode for the SSD1306 test shield: set the i2c adr to 0
 	u8g2.begin();
 	u8g2.enableUTF8Print(); 
 	u8g2.clearBuffer();
@@ -857,14 +834,12 @@ void setup()
 		while (1);
 	}
 
-	bme.setTempCal(-7.1);			// Temp was reading high so subtract 7.1 degree 
+	bme.setTempCal(-6.9);			// Temp was reading high so subtract 7.1 degree 
 }
 
 void loop()
 {
-	timer.run();
-	Main_Timer.run();
-	OTA_Handle();			//Obsługa OTA (Over The Air) wgrywanie nowego kodu przez Wi-Fi
-	Alarm_Counter.run();
 	if (Blynk.connected()) Blynk.run();
+	Timer.run();
+	OTA_Handle();			//Obsługa OTA (Over The Air) wgrywanie nowego kodu przez Wi-Fi
 }
