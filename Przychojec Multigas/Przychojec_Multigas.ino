@@ -807,7 +807,8 @@ void setup()
 
 	//inicjowanie wyświetlacza
 	u8g2.begin();
-	u8g2.enableUTF8Print(); 
+	u8g2.enableUTF8Print();
+	u8g2.setFlipMode(1);				//odwraca ekran o 180°
 	u8g2.clearBuffer();
 	u8g2.setFontMode(1);
 	u8g2.setFont(u8g_font_helvB18);
