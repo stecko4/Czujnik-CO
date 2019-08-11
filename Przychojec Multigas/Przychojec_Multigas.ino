@@ -6,13 +6,24 @@ Gnd (Ground)        ->  Gnd
 SDA (Serial Data)   ->  D2 on NodeMCU / Wemos D1 PRO
 SCK (Serial Clock)  ->  D1 on NodeMCU / Wemos D1 PRO */
 
-//BME280 definition and Mutichannel_Gas_Sensor
+//Mutichannel_Gas_Sensor definition 
+#include "MutichannelGasSensor.h"
+
+//BME280 definition
 #include <EnvironmentCalculations.h>
 #include <Wire.h>
-#include "MutichannelGasSensor.h"
-#include "cactus_io_BME280_I2C.h"
-//Create BME280 object
-BME280_I2C bme(0x76);			//I2C using address 0x76
+#include <BME280I2C.h>
+BME280I2C::Settings settings(
+   BME280::OSR_X1,
+   BME280::OSR_X1,
+   BME280::OSR_X1,
+   BME280::Mode_Forced,
+   BME280::StandbyTime_125ms,
+   BME280::Filter_Off,
+   BME280::SpiEnable_False
+   //BME280I2C::I2CAddr_0x76 // I2C address. I2C specific.
+);
+BME280I2C bme(settings);
 
 //for OTA
 #include <ESP8266mDNS.h>
@@ -43,7 +54,10 @@ float		Propane;
 float		IsoButane;
 float		Hydrogen;
 float		Ethanol;
-int		Alarm30(NAN), Alarm50(NAN), Alarm100(NAN), Alarm300(NAN); //Alarmy dla poszczególnych stężeń CO mierzone w ppm
+int		Alarm30 = 0;		//Alarmy dla poszczególnych stężeń CO mierzone w ppm
+int		Alarm50 = 0;
+int		Alarm100 = 0;
+int		Alarm300 = 0;
 
 
 /*Stężenie tlenku węgla (CO)  Minimalny czas aktywacji czujnika tlenku węgla  Maksymalny czas aktywacji czujnika tlenku węgla
@@ -184,15 +198,6 @@ void OTA_Handle()			//Deklaracja OTA_Handle:
 	}
 }
 
-void MainFunction()			//Robi wszystko co powinien
-{
-	Read_BME280_Values();				//Odczyt danych z czujnika BME280
-	MultiGas_Values();				//Odczyt danych z czujnika Mutichannel_Gas_Sensor
-	Gas_Alarms_Count();				//Sprawdza stężenie i zlicza czas jego przekroczenie, na tej podstawie włączany jest alarm
-	OLED_Display();					//Włącza lub wyłącza wyświetlacz OLED
-	Wyslij_Dane();					//Wysyła dane do serwera Blynk
-}
-
 void Bathrum_Humidity_Control()		//Załączanie wentylatora w łazience jeśli warunek spełniony
 {
 	if (hum >= SetHumid + HumidHist)
@@ -207,11 +212,14 @@ void Bathrum_Humidity_Control()		//Załączanie wentylatora w łazience jeśli w
 
 void Read_BME280_Values()		//Odczyt z czujnika BME280, temperatura, wilgotność i ciśnienie
 {
-	bme.readSensor();				//Odczyt wskazań z czujnika BME280
-	pres = bme.getPressure_MB() + 24.634;		//Korekta dostosowująca do ciśnienia na poziomie morza
-	hum = bme.getHumidity();
-	temp = bme.getTemperature_C();
-	EnvironmentCalculations::AltitudeUnit envAltUnit  =  EnvironmentCalculations::AltitudeUnit_Meters;
+	BME280::TempUnit tempUnit(BME280::TempUnit_Celsius);
+	BME280::PresUnit presUnit(BME280::PresUnit_Pa);
+
+	bme.read(pres, temp, hum, tempUnit, presUnit);
+	temp = temp -0.33;		//Korekta dla temperatury. BME280 się trochę grzeje 
+	pres = pres + 24.634;		//Korekta dostosowująca do ciśnienia na poziomie morza
+	hum = hum;			//Korekta poziomu wilgotności odczytanegoe prze BME280.
+	
 	EnvironmentCalculations::TempUnit     envTempUnit =  EnvironmentCalculations::TempUnit_Celsius;
 	//Dane obliczane na podstawie danych z czujnika
 	dewPoint = EnvironmentCalculations::DewPoint(temp, hum, envTempUnit);
@@ -257,6 +265,30 @@ void MultiGas_ValuesALL()		//Odczyt z czujnika Grove-Multichannel_Gas_Sensor, st
 	C2H5OH = gas.measure_C2H5OH();			// Ethanol C2H5OH 10 – 500ppm */
 }
 
+void OLED_Display()			//Włącza lub wyłącza wyświetlanie danych na ekranie OLED
+{
+	if (OLED_ON == 1 || Alarm_Gazowy == 1)
+	{
+		//Wyświetlanie dane na OLED
+		u8g2.clearBuffer();
+		u8g2.setFontMode(1);
+		u8g2.setFont(u8g2_font_helvR08_tf);  
+		u8g2.drawStr(0,8,"Stezenie CO:"); 
+		u8g2.drawStr(0,42,"Stezenie Metanu:");
+		u8g2.setFont(u8g2_font_logisoso16_tf); 
+		u8g2.setCursor(0,28);
+		u8g2.print(String(int(Tlenek_Wegla)) + " ppm");
+		u8g2.setCursor(0,61);
+		u8g2.print(String(int(Metan)) + " ppm");
+		u8g2.sendBuffer(); 
+	}
+	else if (OLED_ON == 0 && Alarm_Gazowy == 0)
+	{
+		u8g2.clearBuffer();
+		u8g2.sendBuffer();
+	}
+}
+
 void Multi_Gas_Reset()			//Reset czujnika gazu
 {
 	gas.powerOff();
@@ -273,58 +305,6 @@ void Multi_Gas_Reset()			//Reset czujnika gazu
 
 	Metan = gas.measure_CH4();          // Methane CH4 >1000ppm
 	Tlenek_Wegla = gas.measure_CO();    // Carbon monoxide CO 1 – 1000ppm
-}
-
-void Gas_Senor_Heating()		//Rozgrzewanie sensora gazu
-{
-	Metan = gas.measure_CH4();		// Methane CH4 >1000ppm
-	Tlenek_Wegla = gas.measure_CO();	// Carbon monoxide CO 1 – 1000ppm
-	OLED_Display();
-	delay(1500);				// wait 1,5s
-
-	int Metan_final = 1000;
-	if (Metan < 0)
-	{ //Komunikat 'ERROR -1'
-		do
-		{
-			Metan = gas.measure_CH4();	// Methane CH4 >1000ppm
-			u8g2.clearBuffer();
-			u8g2.setFontMode(1);
-			u8g2.setFont(u8g_font_helvB10);
-			u8g2.drawStr( 3, 59, "ERROR -1");
-			u8g2.sendBuffer();
-			delay(1500);
-			Multi_Gas_Reset();
-		}
-		while (Metan < 0); 
-	}
-	else if (Metan > 10000)
-	{
-		RozgrzewanieCO();
-	}
-	else
-	{
-		u8g2.clearBuffer();
-		u8g2.setFont(u8g_font_helvB10);
-		u8g2.drawStr( 3, 25, "ROZGRZEWANIE");
-		u8g2.drawStr( 3, 50, "ZAKONCZONE");
-		u8g2.sendBuffer();
-		delay(1500);
-	}
-	Metan = gas.measure_CH4();			// Methane CH4 >1000ppm
-	if (Metan > 10000)
-	{
-		RozgrzewanieCO();
-	}
-	else
-	{
-		u8g2.clearBuffer();
-		u8g2.setFont(u8g_font_helvB10);
-		u8g2.drawStr( 3, 25, "ROZGRZEWANIE");
-		u8g2.drawStr( 3, 50, "ZAKONCZONE");
-		u8g2.sendBuffer();
-		delay(1500);
-	}
 }
 
 void RozgrzewanieMetan()		//Rozgrzewanie czujnika gazu
@@ -482,6 +462,63 @@ void RozgrzewanieCO()			//Rozgrzewanie czujnika gazu
 	delay(1500);
 }
 
+void Gas_Senor_Heating()		//Rozgrzewanie sensora gazu
+{
+	Metan = gas.measure_CH4();		// Methane CH4 >1000ppm
+	Tlenek_Wegla = gas.measure_CO();	// Carbon monoxide CO 1 – 1000ppm
+	OLED_Display();
+	delay(1500);				// wait 1,5s
+
+	//int Metan_final = 1000;
+	if (Metan < 0)
+	{ //Komunikat 'ERROR -1'
+		do
+		{
+			Metan = gas.measure_CH4();	// Methane CH4 >1000ppm
+			u8g2.clearBuffer();
+			u8g2.setFontMode(1);
+			u8g2.setFont(u8g_font_helvB10);
+			u8g2.drawStr( 3, 59, "ERROR -1");
+			u8g2.sendBuffer();
+			delay(1500);
+			Multi_Gas_Reset();
+		}
+		while (Metan < 0); 
+	}
+	else if (Metan > 10000)
+	{
+		RozgrzewanieCO();
+	}
+	else
+	{
+		u8g2.clearBuffer();
+		u8g2.setFont(u8g_font_helvB10);
+		u8g2.drawStr( 3, 25, "ROZGRZEWANIE");
+		u8g2.drawStr( 3, 50, "ZAKONCZONE");
+		u8g2.sendBuffer();
+		delay(1500);
+	}
+	Metan = gas.measure_CH4();			// Methane CH4 >1000ppm
+	if (Metan > 10000)
+	{
+		RozgrzewanieCO();
+	}
+	else
+	{
+		u8g2.clearBuffer();
+		u8g2.setFont(u8g_font_helvB10);
+		u8g2.drawStr( 3, 25, "ROZGRZEWANIE");
+		u8g2.drawStr( 3, 50, "ZAKONCZONE");
+		u8g2.sendBuffer();
+		delay(1500);
+	}
+}
+
+int WiFi_Strength (long Signal)		//Zwraca siłę sygnału WiFi sieci do której jest podłączony w %. REF: https://www.adriangranados.com/blog/dbm-to-percent-conversion
+{
+	return constrain(round((-0.0154*Signal*Signal)-(0.3794*Signal)+98.182), 0, 100);
+}
+
 void Wyslij_Dane()			//Wysyła dane na serwer Blynk
 {
 	//BME280
@@ -497,11 +534,6 @@ void Wyslij_Dane()			//Wysyła dane na serwer Blynk
 	//Blynk.virtualWrite(V9, BathFan);		//Stan włączenia wentylatora Wł/Wył
 	//Blynk.virtualWrite(V10, Piec_CO);		//Stan włączenia pieca CO Wł/Wył
 	Blynk.virtualWrite(V25, WiFi_Strength(WiFi.RSSI())); //Siła sygnału Wi-Fi [%]
-}
-
-int WiFi_Strength (long Signal)		//Zwraca siłę sygnału WiFi sieci do której jest podłączony w %. REF: https://www.adriangranados.com/blog/dbm-to-percent-conversion
-{
-	return constrain(round((-0.0154*Signal*Signal)-(0.3794*Signal)+98.182), 0, 100);
 }
 
 BLYNK_WRITE(V40)			//Obsługa terminala
@@ -631,76 +663,6 @@ BLYNK_WRITE(V40)			//Obsługa terminala
 	terminal.flush();
 }
 
-void OLED_Display()			//Włącza lub wyłącza wyświetlanie danych na ekranie OLED
-{
-	if (OLED_ON == 1 || Alarm_Gazowy == 1)
-	{
-		//Wyświetlanie dane na OLED
-		u8g2.clearBuffer();
-		u8g2.setFontMode(1);
-		u8g2.setFont(u8g2_font_helvR08_tf);  
-		u8g2.drawStr(0,8,"Stezenie CO:"); 
-		u8g2.drawStr(0,42,"Stezenie Metanu:");
-		u8g2.setFont(u8g2_font_logisoso16_tf); 
-		u8g2.setCursor(0,28);
-		u8g2.print(String(int(Tlenek_Wegla)) + " ppm");
-		u8g2.setCursor(0,61);
-		u8g2.print(String(int(Metan)) + " ppm");
-		u8g2.sendBuffer(); 
-	}
-	else if (OLED_ON == 0 && Alarm_Gazowy == 0)
-	{
-		u8g2.clearBuffer();
-		u8g2.sendBuffer();
-	}
-}
-
-void Gas_Alarms_Count()			//Funkcja uruchamiana co 1s dolicza sekundę do poszczególnych alarmów jeśli stężenie przekroczone określony próg
-{
-	/*Stężenie tlenku węgla (CO) Minimalny czas aktywacji czujnika tlenku węgla  Maksymalny czas aktywacji czujnika tlenku węgla
-	30 ppm  120 minut –
-	50 ppm  60 minut  90 minut
-	100 ppm 10 minut  40 minut
-	300 ppm – 3 minuty  */
-
-	if (Tlenek_Wegla < 30)					//Zeruje czasy wszystkich alarmów
-	{
-		Alarm30 = 0;
-	}
-	else if (Tlenek_Wegla > 30 && Tlenek_Wegla < 50)	//Dodaje sekundę do czasu pierwszego alarmu
-	{
-		Alarm30 = Alarm30 +1;
-		Alarm50 = 0;
-		Alarm100 = 0;
-		Alarm300 = 0;
-	}
-	else if (Tlenek_Wegla > 50 && Tlenek_Wegla < 100)	//Dodaje sekundę do czasu pierwszego i drugiego alarmu
-	{
-		Alarm30 = Alarm30 +1;
-		Alarm50 = Alarm50 +1;
-		Alarm100 = 0;
-		Alarm300 = 0;
-	}
-	else if (Tlenek_Wegla > 100 && Tlenek_Wegla < 300)	//Dodaje sekundę do czasu pierwszego drugiego i trzeciego alarmu
-	{
-		Alarm30 = Alarm30 +1;
-		Alarm50 = Alarm50 +1;
-		Alarm100 = Alarm100 +1;
-		Alarm300 = 0;
-	}
-	else if (Tlenek_Wegla > 300 )				//Dodaje sekundę do czasu wszystkich alarmów
-	{
-		Alarm30 = Alarm30 +1;
-		Alarm50 = Alarm50 +1;
-		Alarm100 = Alarm100 +1;
-		Alarm300 = Alarm300 +1;
-	}
-	if (AlarmActive == 1)					//Uzbrajanie alarmu z poziomu BLYNK
-	{
-		Alarm_Check();						//Włącza buzer i ekran OLED z odczytami jeśli wartości są przekroczone
-	}
-}
-
 void Alarm_Check()			//Funkcja sprawdza czy należy uruchomić alarm czyli włączyć ekran z informacją o stężeniu gazów i uruchomić buzer
 {
 	/*Stężenie tlenku węgla (CO) Minimalny czas aktywacji czujnika tlenku węgla  Maksymalny czas aktywacji czujnika tlenku węgla
@@ -755,6 +717,52 @@ void Alarm_Check()			//Funkcja sprawdza czy należy uruchomić alarm czyli włą
 	*/
 }
 
+void Gas_Alarms_Count()			//Funkcja uruchamiana co 1s dolicza sekundę do poszczególnych alarmów jeśli stężenie przekroczone określony próg
+{
+	/*Stężenie tlenku węgla (CO) Minimalny czas aktywacji czujnika tlenku węgla  Maksymalny czas aktywacji czujnika tlenku węgla
+	30 ppm  120 minut –
+	50 ppm  60 minut  90 minut
+	100 ppm 10 minut  40 minut
+	300 ppm – 3 minuty  */
+
+	if (Tlenek_Wegla < 30)					//Zeruje czasy wszystkich alarmów
+	{
+		Alarm30 = 0;
+	}
+	else if (Tlenek_Wegla > 30 && Tlenek_Wegla < 50)	//Dodaje sekundę do czasu pierwszego alarmu
+	{
+		Alarm30 = Alarm30 +1;
+		Alarm50 = 0;
+		Alarm100 = 0;
+		Alarm300 = 0;
+	}
+	else if (Tlenek_Wegla > 50 && Tlenek_Wegla < 100)	//Dodaje sekundę do czasu pierwszego i drugiego alarmu
+	{
+		Alarm30 = Alarm30 +1;
+		Alarm50 = Alarm50 +1;
+		Alarm100 = 0;
+		Alarm300 = 0;
+	}
+	else if (Tlenek_Wegla > 100 && Tlenek_Wegla < 300)	//Dodaje sekundę do czasu pierwszego drugiego i trzeciego alarmu
+	{
+		Alarm30 = Alarm30 +1;
+		Alarm50 = Alarm50 +1;
+		Alarm100 = Alarm100 +1;
+		Alarm300 = 0;
+	}
+	else if (Tlenek_Wegla > 300 )				//Dodaje sekundę do czasu wszystkich alarmów
+	{
+		Alarm30 = Alarm30 +1;
+		Alarm50 = Alarm50 +1;
+		Alarm100 = Alarm100 +1;
+		Alarm300 = Alarm300 +1;
+	}
+	if (AlarmActive == 1)					//Uzbrajanie alarmu z poziomu BLYNK
+	{
+		Alarm_Check();						//Włącza buzer i ekran OLED z odczytami jeśli wartości są przekroczone
+	}
+}
+
 BLYNK_WRITE(V20)			//Włączanie i wyłączanie wyświetlacza z poziomu aplikacji BLYNK
 {
 	OLED_ON = param.asInt(); 
@@ -785,6 +793,15 @@ BLYNK_WRITE(V21)			//Reset sensora gazu
 BLYNK_WRITE(V22)			//Uzbrajanie Alarmu
 {
 	AlarmActive = param.asInt(); 
+}
+
+void MainFunction()			//Robi wszystko co powinien
+{
+	Read_BME280_Values();				//Odczyt danych z czujnika BME280
+	MultiGas_Values();				//Odczyt danych z czujnika Mutichannel_Gas_Sensor
+	Gas_Alarms_Count();				//Sprawdza stężenie i zlicza czas jego przekroczenie, na tej podstawie włączany jest alarm
+	OLED_Display();					//Włącza lub wyłącza wyświetlacz OLED
+	Wyslij_Dane();					//Wysyła dane do serwera Blynk
 }
 
 /***********************************************************************************************/
@@ -834,8 +851,6 @@ void setup()
 		Serial.println("Could not find a valid BME280 sensor, check wiring!");
 		while (1);
 	}
-
-	bme.setTempCal(-6.9);			// Temp was reading high so subtract 7.1 degree 
 }
 
 void loop()
